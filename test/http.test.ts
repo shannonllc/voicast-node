@@ -120,7 +120,7 @@ describe('errors', () => {
   }
 
   it('422 carries details; x-request-id wins over cf-ray', async () => {
-    const details = [{ path: 'config.voice', message: 'voice は声の名前' }];
+    const details = [{ path: 'config.voice', message: 'voice は声の ID' }];
     const f = fakeFetch(json(422, { error: 'invalid_config', message: 'bad', details }, { 'x-request-id': 'req_1', 'cf-ray': 'r' }));
     const e = (await client(f.fn)
       .tenants.create({ external_id: 'x' })
@@ -223,11 +223,19 @@ describe('retries', () => {
   });
 
   it('retries network errors for safe requests (GET, PATCH, DELETE)', async () => {
-    const f = fakeFetch(new TypeError('ECONNRESET'), json(200, { id: 'ten_1' }), new TypeError('ECONNRESET'), empty(204));
+    const f = fakeFetch(
+      new TypeError('ECONNRESET'),
+      json(200, { id: 'ten_1' }),
+      new TypeError('ECONNRESET'),
+      json(200, { id: 'sipc_1' }),
+      new TypeError('ECONNRESET'),
+      empty(204),
+    );
     const v = client(f.fn);
     expect((await settle(v.tenants.update('ten_1', { name: 'n' }))).value).toEqual({ id: 'ten_1' });
+    expect((await settle(v.tenants.updateSipCredential('ten_1', 'sipc_1', { transfer_to: '200' }))).value).toEqual({ id: 'sipc_1' });
     expect((await settle(v.tenants.delete('ten_1'))).value).toBeUndefined();
-    expect(f.calls.map((c) => c.method)).toEqual(['PATCH', 'PATCH', 'DELETE', 'DELETE']);
+    expect(f.calls.map((c) => c.method)).toEqual(['PATCH', 'PATCH', 'PATCH', 'PATCH', 'DELETE', 'DELETE']);
   });
 
   it('does not retry 5xx or network errors for requests that are not safe to repeat', async () => {
@@ -240,6 +248,7 @@ describe('retries', () => {
         () => v.agents.update('agt', { config }),
         () => v.tenants.create({ external_id: 'x' }),
         () => v.tenants.rotateSecret('ten'),
+        () => v.tenants.createSipCredential('ten'),
         () => v.tools.try({ agent_id: 'agt', tool: 'find_slots' }),
         () => v.sessions.create({ tenant_id: 'ten' }),
         () => v.connections.create({ connector: 'teams', secret: 's' }),

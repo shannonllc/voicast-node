@@ -17,7 +17,7 @@ export class VoicastError extends Error {
   readonly code: string | undefined;
   /** Extra information from the API, such as the list of invalid fields for a 422. */
   readonly details: unknown;
-  /** Request ID (`x-request-id`, or Cloudflare's `cf-ray`) to quote when contacting support. */
+  /** Request ID (`x-request-id`) to quote when contacting support. */
   readonly requestId: string | undefined;
 
   constructor(message: string, options: ErrorOptions = {}) {

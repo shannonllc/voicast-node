@@ -1,5 +1,4 @@
-// voicast が送る Webhook（Webhook Admin 経由、Standard Webhooks の本文 { type, timestamp, data }）と、通話中の道具の呼び出しの型。
-// apps/worker/src/postcall.ts・billing.ts・prepaid.ts と apps/voice/tools.py に合わせる。
+// voicast が送る Webhook（Standard Webhooks の本文 { type, timestamp, data }）と、通話中の道具の呼び出しの型。
 import type { Call, CallChannel, ConnectionStatus, TranscriptTurn } from './types';
 
 /** The tenant a call event belongs to. */

@@ -31,7 +31,7 @@ const agent = await voicast.agents.create({
     ],
     handoff_when: ['急患', '担当者と話したいと言われた'],
     closing: '承りました。担当者から折り返しご連絡します。',
-    voice: 'Kore',
+    voice: 'female-firm',
   },
 });
 
@@ -90,7 +90,7 @@ session.on('end', ({ outcome }) => console.log('ended', outcome));
 | `error` | `{ error }` | |
 | `closed` | `{ reason }` | `ended`, `hangup`, `failed`, `disconnected` or `error`. Emitted once |
 
-Options: `mediaStream` (your own microphone stream), `audioElement`, `playAudio`, `iceServers`, `iceGatheringTimeout`, `disconnectTimeout`, `fetch`. `setMuted(true)` mutes the microphone. `on()` returns a function that removes the listener.
+Options: `mediaStream` (your own microphone stream), `audioContext`, `audioElement`, `playAudio`, `iceServers`, `iceGatheringTimeout`, `disconnectTimeout`, `fetch`. `setMuted(true)` mutes the microphone (`muted` tells the state); with a running `AudioContext` (pass one created in a user gesture on iOS) it sends silence instead of disabling the track, so nothing is lost right after unmuting. `on()` returns a function that removes the listener.
 
 After the call, get the result with `voicast.calls.getByProvider(session.id)`.
 
@@ -191,12 +191,16 @@ if (!r.ok) console.log(r.error, r.message, r.status, r.body);
 | `tenants.delete(id)` | `DELETE /v1/tenants/:id` |
 | `tenants.listConnections(id)` | `GET /v1/tenants/:id/connections` |
 | `tenants.createConnectLink(id, { connectors?, frame_origin? })` | `POST /v1/tenants/:id/connect-links` |
+| `tenants.createSipCredential(id, { name?, agent_id?, transfer_to? })` | `POST /v1/tenants/:id/sip-credentials` (the password is returned only here) |
+| `tenants.listSipCredentials(id)` | `GET /v1/tenants/:id/sip-credentials` |
+| `tenants.updateSipCredential(id, credentialId, { name?, agent_id?, transfer_to? })` | `PATCH /v1/tenants/:id/sip-credentials/:credential` |
+| `tenants.deleteSipCredential(id, credentialId)` | `DELETE /v1/tenants/:id/sip-credentials/:credential` |
 | `calls.list({ tenant_id?, cursor?, limit? })` | `GET /v1/calls` (`before` is still accepted for the first page) |
 | `calls.get(id)` | `GET /v1/calls/:id` |
 | `calls.getByProvider(providerCallId)` | `GET /v1/calls/by-provider/:providerCallId` |
 | `calls.transcript(id)` | `GET /v1/calls/:id/transcript` |
 | `sessions.create({ tenant_id, agent_id?, output? })` | `POST /v1/sessions` |
-| `usage.get({ from?, to?, group_by? })` | `GET /v1/usage` |
+| `usage.get({ from?, to?, group_by?, channel?, tenant_id?, external_id? })` | `GET /v1/usage` |
 | `connectors.list()` | `GET /v1/connectors` |
 | `connections.list({ tenant_id? })` | `GET /v1/connections` |
 | `connections.create({ connector, secret, input?, tenant_id? })` | `POST /v1/connections` |
@@ -210,12 +214,16 @@ if (!r.ok) console.log(r.error, r.message, r.status, r.body);
 | `tools.getSecret()` | `GET /v1/tools/secret` |
 | `tools.rotateSecret()` | `POST /v1/tools/secret/rotate` |
 | `tools.try({ tool, agent_id?, arguments?, tenant_id? })` | `POST /v1/tools/try` |
+| `retention.get()` | `GET /v1/retention` |
+| `retention.update({ retention_days })` | `PATCH /v1/retention` |
 
 Every method also takes request options as the last argument: `{ timeout?, maxRetries?, signal? }`.
 
 The call summary and category are on the `Call` (`summary`, `category`), filled in when `call.summary_ready` is sent. `billed_yen` is what the call costs your organization (yen before tax; `null` while the call is in progress).
 
 `billing.get()` returns your organization's balance, auto-recharge settings and per-minute price (shared by the live and test environments). `billing.createTopup({ amount_yen })` returns a Stripe Checkout URL (500 to 300,000 yen before tax) to open in a browser. Auto-recharge, the monthly cap and the card are changed in the dashboard.
+
+Call records (the call, transcript, collected fields, summary and delivery status) and recordings are deleted automatically after the environment's retention period: 1, 7, 14 or 30 days (30 by default), counted from the end of the call for records and from when they were saved for recordings. `retention.get()` reads it and `retention.update({ retention_days: 7 })` changes it for the key's environment. Shortening it deletes records past the new period at the next daily cleanup; usage and billing do not change.
 
 The API allows 600 requests per minute per API key. Every response has `x-request-id` (`requestId` on errors); quote it when contacting support.
 
@@ -261,7 +269,7 @@ try {
 
 ## Retries and timeouts
 
-`new Voicast(key, { timeout: 30_000, maxRetries: 2 })` are the defaults. 429 is retried for every request, waiting `retry-after` (up to one minute). 5xx, timeouts and network errors are retried only for requests safe to repeat (GET, PATCH, DELETE), with exponential backoff from 0.5 s. Creating agents, tenants, sessions and connections, updating an agent and rotating a secret are not retried on those, so they never run twice.
+`new Voicast(key, { timeout: 30_000, maxRetries: 2 })` are the defaults. 429 is retried for every request, waiting `retry-after` (up to one minute). 5xx, timeouts and network errors are retried only for requests safe to repeat (GET, PATCH, DELETE), with exponential backoff from 0.5 s. Creating agents, tenants, sessions, connections and SIP credentials, updating an agent and rotating a secret are not retried on those, so they never run twice.
 
 ## Links
 

@@ -1,5 +1,5 @@
 // voicast/web: ブラウザ（と WebView）から WebRTC で voicast と話す。依存なし。
-// 手順は apps/demo/index.html・apps/voice/tests/web_session.py と同じ（Pipecat の SmallWebRTC と RTVI）:
+// 手順（RTVI）:
 //   マイク → RTCPeerConnection（音声 sendrecv・映像 recvonly）→ データチャンネル "chat" → offer を webrtc_url に POST（初回は token）
 //   → answer → 後から見つかった ICE の候補は PATCH → データチャンネルで client-ready と 1 秒ごとの ping
 //   返事は output が audio なら音声トラック、text なら RTVI の server-message（voicast.reply / voicast.interrupted / voicast.end）。
@@ -7,13 +7,14 @@
 
 /**
  * Error from a Web voice session. `status` is set when the voice server refused the offer
- * (403: invalid, expired or used token; 402: new calls are refused for billing, with `code` `balance_depleted` as in `POST /v1/sessions`).
+ * (403: invalid, expired or used token; 402: new calls are refused for billing, with `code` `balance_depleted` as in `POST /v1/sessions`;
+ * 503: the voice server is busy, with `code` `busy` — retry shortly with the same token).
  */
 export class VoiceSessionError extends Error {
   override name = 'VoiceSessionError';
   /** HTTP status from the voice server, when it refused the offer. */
   readonly status: number | undefined;
-  /** Error code from the voice server, when it sent one (402: `balance_depleted`). */
+  /** Error code from the voice server, when it sent one (402: `balance_depleted`, 503: `busy`). */
   readonly code: string | undefined;
 
   constructor(message: string, options: { status?: number; code?: string } = {}) {
@@ -70,6 +71,13 @@ export interface VoiceSessionOptions {
   webrtcUrl: string;
   /** Microphone stream. Default: `getUserMedia` with echo cancellation, noise suppression and auto gain. Not stopped on close when given. */
   mediaStream?: MediaStream;
+  /**
+   * Used by `setMuted()` to send silence instead of disabling the track (a disabled track sends nothing, and the first
+   * moments after unmuting can be lost, so a short reply such as "yes" may not be heard). Pass a context created in a
+   * user gesture on iOS / iPadOS. Default: a new `AudioContext` when one starts running without a gesture; otherwise
+   * `setMuted()` falls back to disabling the track. Not closed on close when given.
+   */
+  audioContext?: AudioContext;
   /** Plays the AI's voice. Default: a new `Audio` element. */
   audioElement?: HTMLAudioElement;
   /** `false` leaves playing the `track` to you. Default `true`. */
@@ -108,6 +116,9 @@ export class VoiceSession {
   private dc: RTCDataChannel | undefined;
   private audio: HTMLAudioElement | undefined;
   private ownStream = false;
+  private isMuted = false;
+  // マイクの音を音量で止める口 (setMuted)。作れなければトラックの有効・無効で止める
+  private gate: { ctx: AudioContext; gain: GainNode; dest: MediaStreamAudioDestinationNode; own: boolean } | undefined;
   private started = false;
   private sdpTaken = false;
   private late: Candidate[] = [];
@@ -169,8 +180,10 @@ export class VoiceSession {
     }
     // マイクの許可を待つ間に stop() されたとき
     if (this.closed) throw new VoiceSessionError('The session was closed while starting');
-    const track = this.localStream.getAudioTracks()[0];
-    if (!track) throw new VoiceSessionError('The media stream has no audio track');
+    const mic = this.localStream.getAudioTracks()[0];
+    if (!mic) throw new VoiceSessionError('The media stream has no audio track');
+    const track = this.openGate(this.localStream) ?? mic;
+    if (!this.gate && this.isMuted) mic.enabled = false;
 
     const pc = new RTCPeerConnection({ iceServers: o.iceServers ?? DEFAULT_ICE });
     this.pc = pc;
@@ -201,9 +214,46 @@ export class VoiceSession {
     if (this.dc?.readyState === 'open') this.dc.send(JSON.stringify(message));
   }
 
-  /** Mutes or unmutes the microphone. */
+  /**
+   * Mutes or unmutes the microphone. With an `AudioContext` (see `audioContext`), it keeps sending silence so that
+   * nothing is lost right after unmuting; otherwise it disables the track.
+   */
   setMuted(muted: boolean): void {
-    for (const t of this.localStream?.getAudioTracks() ?? []) t.enabled = !muted;
+    this.isMuted = muted;
+    if (this.gate) this.gate.gain.gain.setTargetAtTime(muted ? 0 : 1, this.gate.ctx.currentTime, 0.02);
+    else for (const t of this.localStream?.getAudioTracks() ?? []) t.enabled = !muted;
+  }
+
+  /** `true` while muted by `setMuted(true)`. */
+  get muted(): boolean {
+    return this.isMuted;
+  }
+
+  // マイクを GainNode に通して送る。AudioContext が動いていなければ使わない (iOS は画面に触れた流れの外で作ると止まったままで、無音しか送れない)
+  private openGate(stream: MediaStream): MediaStreamTrack | undefined {
+    let ctx = this.options.audioContext;
+    let own = false;
+    if (!ctx) {
+      const Ctor = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
+      if (!Ctor) return undefined;
+      try {
+        ctx = new Ctor();
+        own = true;
+      } catch {
+        return undefined;
+      }
+    }
+    if (ctx.state !== 'running') {
+      if (own) void ctx.close().catch(() => {});
+      return undefined;
+    }
+    const gain = ctx.createGain();
+    gain.gain.value = this.isMuted ? 0 : 1;
+    const dest = ctx.createMediaStreamDestination();
+    ctx.createMediaStreamSource(stream).connect(gain);
+    gain.connect(dest);
+    this.gate = { ctx, gain, dest, own };
+    return dest.stream.getAudioTracks()[0];
   }
 
   /** Hangs up. */
@@ -226,11 +276,14 @@ export class VoiceSession {
       sdp?: string;
       type?: RTCSdpType;
       pc_id?: string;
+      message?: unknown;
       detail?: unknown;
       error?: unknown;
     };
     if (!res.ok) {
-      const detail = typeof answer.detail === 'string' ? answer.detail : `HTTP ${res.status}`;
+      // 音声サーバーのエラーは { error, message }（前の音声サーバーは detail だけ）
+      const said = typeof answer.message === 'string' ? answer.message : answer.detail;
+      const detail = typeof said === 'string' ? said : `HTTP ${res.status}`;
       const code = typeof answer.error === 'string' ? answer.error : undefined;
       throw new VoiceSessionError(`The voice server refused the connection: ${detail}`, { status: res.status, code });
     }
@@ -355,6 +408,11 @@ export class VoiceSession {
       // 閉じかけの接続
     }
     if (this.ownStream) for (const t of (this.localStream as MediaStream).getTracks()) t.stop();
+    if (this.gate) {
+      for (const t of this.gate.dest.stream.getTracks()) t.stop();
+      if (this.gate.own) void this.gate.ctx.close().catch(() => {});
+      this.gate = undefined;
+    }
     if (this.audio) this.audio.srcObject = null;
     this.emit('closed', { reason });
   }

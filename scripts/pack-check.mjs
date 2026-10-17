@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ビルドした成果物を npm pack し、別のディレクトリに入れて、素の Node（ESM・CJS）・型（node16 の ESM・CJS）・
-// Deno（あれば）から使えることを確かめる。pnpm test の最後に流す（Webhook Admin の SDK の pack-check と同じ作り）。
+// Deno（あれば）から使えることを確かめる。pnpm test の最後に流す。
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';

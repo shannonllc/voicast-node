@@ -4,6 +4,7 @@ import { Agents } from './resources/agents';
 import { Billing } from './resources/billing';
 import { Calls } from './resources/calls';
 import { Connections, Connectors } from './resources/connections';
+import { Retention } from './resources/retention';
 import { Sessions } from './resources/sessions';
 import { Tenants } from './resources/tenants';
 import { Tools } from './resources/tools';
@@ -39,6 +40,7 @@ export class Voicast {
   readonly webhooks: Webhooks;
   readonly billing: Billing;
   readonly tools: Tools;
+  readonly retention: Retention;
   readonly baseUrl: string;
 
   /**
@@ -68,5 +70,6 @@ export class Voicast {
     this.webhooks = new Webhooks(http);
     this.billing = new Billing(http);
     this.tools = new Tools(http);
+    this.retention = new Retention(http);
   }
 }

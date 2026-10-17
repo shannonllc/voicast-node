@@ -1,4 +1,4 @@
-// /v1 の入力と返りの型（docs/api.md と apps/worker/src/resources.ts に合わせる）。時刻は Unix ミリ秒。
+// /v1 の入力と返りの型（API のリファレンスに合わせる）。時刻は Unix ミリ秒。
 
 /** Options accepted by every method as the last argument. */
 export interface RequestOptions {
@@ -73,8 +73,22 @@ export interface AgentTool {
   /** Sends an API key with every request. */
   auth?: AgentToolAuth;
   parameters?: { properties: Record<string, AgentToolParameter>; required?: string[] };
-  /** `true`: the AI reads out the details and uses the tool only after the caller agrees. Use it for tools that book, change or cancel. */
+  /**
+   * `true`: before the tool runs, voicast asks the caller with a fixed confirmation message made from the arguments, runs it only after
+   * the caller agrees, and tells the caller the result in a fixed message. Use it for tools that book, change or cancel.
+   */
   confirm?: boolean;
+  /**
+   * Confirmation message template for a `confirm` tool (up to 200 characters). `{argument name}` inserts the value; date and time values
+   * are read as spoken dates. If omitted, a default message made from the argument values is used.
+   */
+  confirm_message?: string;
+  /** Message said when a `confirm` tool succeeds (up to 200 characters, `{argument name}` can be inserted). Default: "That's been completed." */
+  done_message?: string;
+  /** `true`: the text the AI writes in a reply that calls this tool is not spoken. Use it when only the tool response `say` should be spoken. */
+  quiet?: boolean;
+  /** `true`: the request body includes `heard`, what the caller said just before (transcripts, oldest first, up to 5). Signed tools only. */
+  heard?: boolean;
 }
 
 /**
@@ -86,38 +100,38 @@ export type AgentConnectorEntry =
   | { connector: string; actions?: string[]; confirm?: string[] }
   | { connection: string; actions?: string[]; confirm?: string[] };
 
-/** Chirp 3 HD Japanese voice names. Other strings are rejected by the API with 422 `invalid_config`. */
+/** Voice IDs (every voice speaks every supported language). Other strings are rejected by the API with 422 `invalid_config`. */
 export type VoiceName =
-  | 'Aoede'
-  | 'Kore'
-  | 'Leda'
-  | 'Zephyr'
-  | 'Autonoe'
-  | 'Laomedeia'
-  | 'Sulafat'
-  | 'Vindemiatrix'
-  | 'Achernar'
-  | 'Despina'
-  | 'Erinome'
-  | 'Pulcherrima'
-  | 'Gacrux'
-  | 'Callirrhoe'
-  | 'Charon'
-  | 'Puck'
-  | 'Orus'
-  | 'Alnilam'
-  | 'Fenrir'
-  | 'Achird'
-  | 'Iapetus'
-  | 'Umbriel'
-  | 'Algieba'
-  | 'Algenib'
-  | 'Rasalgethi'
-  | 'Schedar'
-  | 'Zubenelgenubi'
-  | 'Sadachbia'
-  | 'Sadaltager'
-  | 'Enceladus';
+  | 'female-breezy'
+  | 'female-firm'
+  | 'female-youthful'
+  | 'female-bright'
+  | 'female-cheerful'
+  | 'female-upbeat'
+  | 'female-warm'
+  | 'female-gentle'
+  | 'female-soft'
+  | 'female-smooth'
+  | 'female-clear'
+  | 'female-brisk'
+  | 'female-mature'
+  | 'female-easygoing'
+  | 'male-calm'
+  | 'male-upbeat'
+  | 'male-firm'
+  | 'male-deep'
+  | 'male-energetic'
+  | 'male-friendly'
+  | 'male-clear'
+  | 'male-easygoing'
+  | 'male-smooth'
+  | 'male-gravelly'
+  | 'male-informative'
+  | 'male-steady'
+  | 'male-casual'
+  | 'male-lively'
+  | 'male-savvy'
+  | 'male-breathy';
 
 /** Allowed `speaking_rate` steps. Default 1.15. */
 export type SpeakingRate = 0.85 | 0.9 | 0.95 | 1 | 1.05 | 1.1 | 1.15 | 1.2 | 1.25 | 1.3 | 1.4 | 1.5;
@@ -140,7 +154,7 @@ export interface AgentConfig {
   domain?: string;
   /** Terms (speech recognition hint). */
   vocabulary?: string[];
-  /** Default `Aoede`. */
+  /** Voice ID. Default `female-breezy`. */
   voice?: VoiceName;
   /** Default 1.15. */
   speaking_rate?: SpeakingRate;
@@ -226,6 +240,55 @@ export interface TenantSecret {
   previous_secret_expires_at: number;
 }
 
+/** Digest credentials for a PBX that sends calls over SIP to `sip.voicast.jp`. */
+export interface SipCredential {
+  /** `sipc_…`. */
+  id: string;
+  /** The Digest user name (the same as `id`). */
+  username: string;
+  /** The Digest realm (`voicast`). */
+  realm: string;
+  /** Where the PBX sends calls (`sip.voicast.jp`). */
+  server: string;
+  tenant_id: string;
+  /** The agent that takes calls on these credentials. `null` uses the tenant's agent. */
+  agent_id: string | null;
+  name: string;
+  /**
+   * Where the PBX transfers the call (with SIP REFER) when the AI hands off to a person (outcome `handoff`):
+   * an extension or number, or a SIP URI (`sip:` / `sips:`). An empty string means no transfer.
+   */
+  transfer_to: string;
+  created_at: number;
+}
+
+export interface SipCredentialWithPassword extends SipCredential {
+  /** The Digest password. Returned only here. */
+  password: string;
+}
+
+export interface SipCredentialCreateParams {
+  /** A name to tell the PBX apart (up to 100 characters). */
+  name?: string;
+  /** The agent that takes calls on these credentials. Omit (or `null`) to use the tenant's agent. */
+  agent_id?: string | null;
+  /**
+   * Where the PBX transfers the call on a handoff: an extension or number (digits and `*` `#` `+`, up to 32 characters)
+   * or a SIP URI (`sip:` / `sips:`, up to 200 characters). Omit (or `''` / `null`) for no transfer.
+   */
+  transfer_to?: string | null;
+}
+
+/** Only the fields given change. */
+export interface SipCredentialUpdateParams {
+  /** A name to tell the PBX apart (up to 100 characters). */
+  name?: string;
+  /** The agent that takes calls on these credentials. `null` uses the tenant's agent. */
+  agent_id?: string | null;
+  /** Where the PBX transfers the call on a handoff (see `SipCredentialCreateParams.transfer_to`). `''` or `null` for no transfer. */
+  transfer_to?: string | null;
+}
+
 // 通話
 
 export type CallOutcome = 'completed' | 'answered' | 'handoff' | 'hangup' | 'error';
@@ -256,11 +319,19 @@ export interface Call {
   category: string | null;
   has_transcript: boolean;
   channel: CallChannel;
+  /** `true` for a call made with Test in browser in the dashboard. */
+  trial: boolean;
   output: CallOutput;
 }
 
 export interface CallListParams {
   tenant_id?: string;
+  /** Filter by outcome. `in_progress` is a call that has no outcome yet. */
+  outcome?: CallOutcome | 'in_progress';
+  /** Calls that started at or after this time: a date (`YYYY-MM-DD`, Japan time) or Unix milliseconds. */
+  from?: string | number;
+  /** Calls that started before this time: a date (`YYYY-MM-DD`, Japan time, the whole day included) or Unix milliseconds. */
+  to?: string | number;
   /** `next_cursor` from the previous page. */
   cursor?: string;
   /**
@@ -324,6 +395,18 @@ export interface UsageParams {
   /** `YYYY-MM-DD` (Japan time, inclusive) or Unix milliseconds (exclusive). Default: now. Up to 366 days. */
   to?: string | number;
   group_by?: UsageGroupBy;
+  /** Only this channel. With `group_by: 'tenant'`, phone minutes per tenant. */
+  channel?: CallChannel;
+  /** Only this tenant (`ten_…`). */
+  tenant_id?: string;
+  /** Only the existing tenant with this `external_id`. */
+  external_id?: string;
+}
+
+export interface UsageFilter {
+  channel: CallChannel | null;
+  tenant_id: string | null;
+  external_id: string | null;
 }
 
 export interface UsageTotals {
@@ -342,6 +425,8 @@ export interface Usage {
   from: number;
   to: number;
   group_by: UsageGroupBy | null;
+  /** The filters applied (`null` when not given). */
+  filter: UsageFilter;
   unit_price_yen: number;
   total: UsageTotals;
   /** Empty when `group_by` is not given. */
@@ -404,6 +489,20 @@ export interface Topup {
 
 // 通話中の道具の署名の鍵
 
+/** Retention period in days for call records and recordings. 30 is the default and the maximum. */
+export type RetentionDays = 1 | 7 | 14 | 30;
+
+export interface Retention {
+  /** Days call records (from the end of the call) and recordings (from when they were saved) are kept in this environment. */
+  retention_days: RetentionDays;
+  /** The values you can set: `[1, 7, 14, 30]`. */
+  choices: RetentionDays[];
+}
+
+export interface RetentionUpdateParams {
+  retention_days: RetentionDays;
+}
+
 export interface ToolsSecret {
   /** `whsec_…`. Verify tool calls with it (`verifyToolCall`). */
   secret: string;
@@ -415,7 +514,8 @@ export interface ToolTryParams {
   /** The tool: the `name` of a tool saved in `agent_id`'s agent, or a tool definition (before saving it). */
   tool: string | AgentTool;
   /**
-   * Required when `tool` is a name. With a definition, the agent's stored API key is used when `auth.value` is left out.
+   * Required when `tool` is a name (the agent's stored API key is used). A definition must carry its own `auth.value`;
+   * the stored key is never sent to a definition's URL (422 `missing_api_key`).
    */
   agent_id?: string;
   /** Arguments for the tool. Default `{}`. */

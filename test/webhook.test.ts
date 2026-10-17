@@ -1,5 +1,5 @@
 // Standard Webhooks の検証（voicast の Webhook と、通話中の道具の呼び出し）。
-// 署名は node:crypto の HMAC で別に作り（apps/voice/tools.py の sign と同じ手順）、SDK の検証と突き合わせる。
+// 署名は node:crypto の HMAC で別に作り（voicast が道具の呼び出しに付ける署名と同じ手順）、SDK の検証と突き合わせる。
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -15,7 +15,7 @@ import {
 const SECRET = 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw';
 const OTHER = 'whsec_C2FVsBQIhrscChlQIMV+b5sSYspob7oD';
 
-/** tools.py の sign と同じ: 鍵ごとに v1,<base64(HMAC-SHA256)> を空白で並べる */
+/** voicast の署名と同じ: 鍵ごとに v1,<base64(HMAC-SHA256)> を空白で並べる */
 function pySign(secrets: string[], id: string, ts: number, body: string): string {
   return secrets
     .map(
@@ -138,7 +138,7 @@ describe('verifyToolCall', () => {
 });
 
 describe('Webhook.verify', () => {
-  it('sign() produces what tools.py produces, and verify() accepts it', async () => {
+  it('sign() produces what voicast produces, and verify() accepts it', async () => {
     const wh = new Webhook(SECRET);
     const ts = now();
     const sig = await wh.sign('msg_2', ts, toolCall);

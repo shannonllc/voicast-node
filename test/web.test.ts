@@ -274,7 +274,7 @@ describe('VoiceSession: connecting', () => {
   });
 
   it('a billing refusal (402) carries the error code, as in POST /v1/sessions', async () => {
-    const body = { error: 'balance_depleted', message: '残高が無いため', detail: '残高が無いため' };
+    const body = { error: 'balance_depleted', message: '残高が無いため', detail: '前の形' };
     const f = fakeFetch(new Response(JSON.stringify(body), { status: 402 }));
     const e = (await new VoiceSession(opts(f.fn)).start().catch((x) => x)) as VoiceSessionError;
     expect(e).toMatchObject({ status: 402, code: 'balance_depleted', message: 'The voice server refused the connection: 残高が無いため' });
@@ -602,6 +602,108 @@ describe('audio', () => {
     s.setMuted(true);
     expect(mic.tracks[0]!.enabled).toBe(false);
     s.setMuted(false);
+    expect(mic.tracks[0]!.enabled).toBe(true);
+  });
+});
+
+class FakeAudioContext {
+  static made = 0;
+  static startState: AudioContextState = 'running';
+  static throwOnNew = false;
+  static closeRejects = false;
+  state: AudioContextState = FakeAudioContext.startState;
+  currentTime = 1;
+  closed = false;
+  gain = { gain: { value: 1, setTargetAtTime: vi.fn((v: number) => (this.gain.gain.value = v)) }, connect: vi.fn() };
+  out = new FakeStream();
+  sources: unknown[] = [];
+  constructor() {
+    if (FakeAudioContext.throwOnNew) throw new Error('not allowed');
+    FakeAudioContext.made += 1;
+  }
+  createGain() {
+    return this.gain;
+  }
+  createMediaStreamDestination() {
+    return { stream: this.out };
+  }
+  createMediaStreamSource(stream: unknown) {
+    this.sources.push(stream);
+    return { connect: vi.fn() };
+  }
+  async close() {
+    this.closed = true;
+    if (FakeAudioContext.closeRejects) throw new Error('already closed');
+  }
+}
+
+describe('setMuted with an AudioContext (sends silence instead of disabling the track)', () => {
+  beforeEach(() => {
+    FakeAudioContext.made = 0;
+    FakeAudioContext.startState = 'running';
+    FakeAudioContext.throwOnNew = false;
+    FakeAudioContext.closeRejects = false;
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+  });
+
+  it('falls back when the context cannot be created, and ignores a failing close', async () => {
+    FakeAudioContext.throwOnNew = true;
+    const a = await started();
+    expect(a.pc.transceivers[0]![0]).toBe(mic.tracks[0]);
+    a.s.stop();
+    FakeAudioContext.throwOnNew = false;
+    FakeAudioContext.closeRejects = true;
+    FakeAudioContext.startState = 'suspended';
+    const b = await started(); // 動いていないので閉じる (失敗しても投げない)
+    expect(b.pc.transceivers[0]![0]).toBe(mic.tracks[0]);
+    FakeAudioContext.startState = 'running';
+    const c = await started();
+    c.s.stop(); // 自分で作ったものを閉じる (失敗しても投げない)
+    await Promise.resolve();
+  });
+
+  it('does not use or close a given context that is not running', async () => {
+    FakeAudioContext.startState = 'suspended';
+    const given = new FakeAudioContext();
+    const { pc } = await started({ audioContext: given as unknown as AudioContext });
+    expect(pc.transceivers[0]![0]).toBe(mic.tracks[0]);
+    expect(given.closed).toBe(false);
+  });
+
+  it('sends the gated track and mutes by volume; closes its own context', async () => {
+    const pre = new VoiceSession(opts(fakeFetch(answer()).fn));
+    pre.setMuted(true); // 始める前に止めておくと、始めたときから無音
+    await pre.start();
+    const ctx = (pre as unknown as { gate: { ctx: FakeAudioContext } }).gate.ctx;
+    expect(FakePC.last.transceivers[0]![0]).toBe(ctx.out.tracks[0]);
+    expect(ctx.gain.gain.value).toBe(0);
+    expect(pre.muted).toBe(true);
+    pre.setMuted(false);
+    expect(ctx.gain.gain.value).toBe(1);
+    expect(mic.tracks[0]!.enabled).toBe(true); // マイクのトラックは無効にしない
+    pre.stop();
+    expect(ctx.out.tracks[0]!.stop).toHaveBeenCalled();
+    expect(ctx.closed).toBe(true);
+  });
+
+  it('uses the given context and does not close it', async () => {
+    const given = new FakeAudioContext();
+    const { s } = await started({ audioContext: given as unknown as AudioContext });
+    expect(given.sources).toEqual([mic]);
+    s.setMuted(true);
+    expect(given.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0, 1, 0.02);
+    s.stop();
+    expect(given.closed).toBe(false);
+  });
+
+  it('falls back to disabling the track when the context is not running (iOS outside a gesture)', async () => {
+    FakeAudioContext.startState = 'suspended';
+    const pre = new VoiceSession(opts(fakeFetch(answer()).fn));
+    pre.setMuted(true);
+    await pre.start();
+    expect(FakePC.last.transceivers[0]![0]).toBe(mic.tracks[0]);
+    expect(mic.tracks[0]!.enabled).toBe(false);
+    pre.setMuted(false);
     expect(mic.tracks[0]!.enabled).toBe(true);
   });
 });

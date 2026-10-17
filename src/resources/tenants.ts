@@ -5,6 +5,10 @@ import type {
   Link,
   List,
   RequestOptions,
+  SipCredential,
+  SipCredentialCreateParams,
+  SipCredentialUpdateParams,
+  SipCredentialWithPassword,
   Tenant,
   TenantCreateParams,
   TenantSecret,
@@ -61,6 +65,50 @@ export class Tenants {
   createConnectLink(tenantId: string, params: ConnectLinkParams = {}, options?: RequestOptions): Promise<Link> {
     return this.http.request(
       { method: 'POST', path: `/v1/tenants/${id(tenantId)}/connect-links`, body: params, idempotent: true },
+      options,
+    );
+  }
+
+  /**
+   * Creates Digest credentials for a PBX that sends calls over SIP to `sip.voicast.jp`.
+   * The password is returned only here. Not retried on a 5xx or a network error (a retry would make a second credential).
+   */
+  createSipCredential(
+    tenantId: string,
+    params: SipCredentialCreateParams = {},
+    options?: RequestOptions,
+  ): Promise<SipCredentialWithPassword> {
+    return this.http.request(
+      { method: 'POST', path: `/v1/tenants/${id(tenantId)}/sip-credentials`, body: params, idempotent: false },
+      options,
+    );
+  }
+
+  /** Lists the tenant's SIP credentials (without passwords). */
+  listSipCredentials(tenantId: string, options?: RequestOptions): Promise<List<SipCredential>> {
+    return this.http.request({ method: 'GET', path: `/v1/tenants/${id(tenantId)}/sip-credentials`, idempotent: true }, options);
+  }
+
+  /**
+   * Changes only the fields given and returns the credentials (without the password).
+   * `agent_id: null` uses the tenant's agent; `transfer_to: ''` or `null` turns the transfer off.
+   */
+  updateSipCredential(
+    tenantId: string,
+    credentialId: string,
+    params: SipCredentialUpdateParams,
+    options?: RequestOptions,
+  ): Promise<SipCredential> {
+    return this.http.request(
+      { method: 'PATCH', path: `/v1/tenants/${id(tenantId)}/sip-credentials/${id(credentialId)}`, body: params, idempotent: true },
+      options,
+    );
+  }
+
+  /** Deletes SIP credentials. Calls on them are refused at once. */
+  async deleteSipCredential(tenantId: string, credentialId: string, options?: RequestOptions): Promise<void> {
+    await this.http.request(
+      { method: 'DELETE', path: `/v1/tenants/${id(tenantId)}/sip-credentials/${id(credentialId)}`, idempotent: true },
       options,
     );
   }

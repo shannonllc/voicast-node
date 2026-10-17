@@ -1,4 +1,4 @@
-// 各メソッドが docs/api.md の呼び出し（メソッド・パス・クエリ・本文）になること。
+// 各メソッドが API のリファレンスの呼び出し（メソッド・パス・クエリ・本文）になること。
 import { describe, expect, it } from 'vitest';
 import type { AgentConfig, Voicast } from '../src/index';
 import { client, empty, fakeFetch, json } from './helpers';
@@ -9,7 +9,7 @@ const config: AgentConfig = {
   fields: [{ key: 'name', label: 'お名前', required: true }],
   handoff_when: ['怒っている'],
   closing: '承りました',
-  voice: 'Kore',
+  voice: 'female-firm',
   speaking_rate: 1.15,
   tools: [
     { name: 'find_slots', description: '空きを探す', url: 'https://tools.example.com/voicast' },
@@ -97,6 +97,42 @@ const cases: Case[] = [
     body: {},
     status: 201,
   },
+  {
+    name: 'tenants.createSipCredential',
+    run: (v) => v.tenants.createSipCredential('ten_1', { name: '本院の PBX', agent_id: 'agt_1', transfer_to: '200' }),
+    method: 'POST',
+    path: '/v1/tenants/ten_1/sip-credentials',
+    body: { name: '本院の PBX', agent_id: 'agt_1', transfer_to: '200' },
+    status: 201,
+  },
+  {
+    name: 'tenants.createSipCredential (no params)',
+    run: (v) => v.tenants.createSipCredential('ten_1'),
+    method: 'POST',
+    path: '/v1/tenants/ten_1/sip-credentials',
+    body: {},
+    status: 201,
+  },
+  {
+    name: 'tenants.listSipCredentials',
+    run: (v) => v.tenants.listSipCredentials('ten_1'),
+    method: 'GET',
+    path: '/v1/tenants/ten_1/sip-credentials',
+  },
+  {
+    name: 'tenants.updateSipCredential (encoded)',
+    run: (v) => v.tenants.updateSipCredential('ten_1', 'sipc/1', { agent_id: null, transfer_to: 'sip:200@pbx.example.com' }),
+    method: 'PATCH',
+    path: '/v1/tenants/ten_1/sip-credentials/sipc%2F1',
+    body: { agent_id: null, transfer_to: 'sip:200@pbx.example.com' },
+  },
+  {
+    name: 'tenants.deleteSipCredential (encoded)',
+    run: (v) => v.tenants.deleteSipCredential('ten_1', 'sipc/1'),
+    method: 'DELETE',
+    path: '/v1/tenants/ten_1/sip-credentials/sipc%2F1',
+    status: 204,
+  },
   { name: 'calls.get', run: (v) => v.calls.get('call_1'), method: 'GET', path: '/v1/calls/call_1' },
   {
     name: 'calls.getByProvider (encoded)',
@@ -120,6 +156,13 @@ const cases: Case[] = [
     method: 'GET',
     path: '/v1/usage',
     search: '?from=2026-10-01&to=1790000000000&group_by=tenant',
+  },
+  {
+    name: 'usage.get with filters',
+    run: (v) => v.usage.get({ group_by: 'tenant', channel: 'phone', tenant_id: 'ten_1', external_id: 'clinic-1' }),
+    method: 'GET',
+    path: '/v1/usage',
+    search: '?group_by=tenant&channel=phone&tenant_id=ten_1&external_id=clinic-1',
   },
   { name: 'connectors.list', run: (v) => v.connectors.list(), method: 'GET', path: '/v1/connectors' },
   { name: 'connections.list', run: (v) => v.connections.list(), method: 'GET', path: '/v1/connections', search: '' },
@@ -192,6 +235,14 @@ const cases: Case[] = [
     path: '/v1/billing/topups',
     body: { amount_yen: 3000 },
     status: 201,
+  },
+  { name: 'retention.get', run: (v) => v.retention.get(), method: 'GET', path: '/v1/retention' },
+  {
+    name: 'retention.update',
+    run: (v) => v.retention.update({ retention_days: 7 }),
+    method: 'PATCH',
+    path: '/v1/retention',
+    body: { retention_days: 7 },
   },
   { name: 'tools.getSecret', run: (v) => v.tools.getSecret(), method: 'GET', path: '/v1/tools/secret' },
   { name: 'tools.rotateSecret', run: (v) => v.tools.rotateSecret(), method: 'POST', path: '/v1/tools/secret/rotate' },

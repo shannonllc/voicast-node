@@ -80,5 +80,8 @@
   },
   "bugs": {
     "url": "https://github.com/shannonllc/voicast-node/issues"
+  },
+  "overrides": {
+    "esbuild": "^0.28.2"
   }
 }
